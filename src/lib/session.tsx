@@ -15,6 +15,8 @@ export interface SessionState {
 }
 
 interface SessionCtx extends SessionState {
+  /** Increments on every setSession, so the practice screen can start a fresh run. */
+  runId: number;
   setSession: (s: SessionState) => void;
   pickTopic: () => Topic;
 }
@@ -28,6 +30,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     prep: false,
     record: false,
   });
+  const [runId, setRunId] = useState(0);
   const used = useRef<Set<string>>(new Set());
   // The bundled list works offline and before Firestore is seeded; Firestore wins once it has topics.
   const [topics, setTopics] = useState<Topic[]>(bundledTopics);
@@ -43,6 +46,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const setSession = useCallback((s: SessionState) => {
     setState(s);
+    setRunId((n) => n + 1);
     used.current = new Set();
   }, []);
 
@@ -59,7 +63,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return t;
   }, [state.level, topics]);
 
-  const value = useMemo(() => ({ ...state, setSession, pickTopic }), [state, setSession, pickTopic]);
+  const value = useMemo(() => ({ ...state, runId, setSession, pickTopic }), [state, runId, setSession, pickTopic]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

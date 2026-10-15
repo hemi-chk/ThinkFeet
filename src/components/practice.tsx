@@ -26,7 +26,16 @@ interface SpeechResult {
   save: SaveStatus | null;
 }
 
+/**
+ * With Cache Components, Next.js keeps visited pages alive (hidden) instead of unmounting them,
+ * so a stale round would resume after Exit → Start. Keying on runId starts each round fresh.
+ */
 export function Practice() {
+  const { runId } = useSession();
+  return <PracticeRun key={runId} />;
+}
+
+function PracticeRun() {
   const s = useSession();
   const { user } = useAuth();
   const router = useRouter();
