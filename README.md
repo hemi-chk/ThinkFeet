@@ -10,7 +10,8 @@ Built with Next.js, Tailwind CSS, shadcn/ui and Firebase (Auth + Firestore).
 npm install
 npm run dev
 ```
-# Public Mode 
+# Public Mode
+<img width="1728" height="798" alt="image" src="https://github.com/user-attachments/assets/dacaaa83-26dd-4016-a8b3-40492840d13e" />
 <img width="1437" height="856" alt="image" src="https://github.com/user-attachments/assets/fe9aca96-5a88-4230-a8fa-6370cdaedbb5" />
 <img width="1877" height="773" alt="image" src="https://github.com/user-attachments/assets/33d50218-f447-4ee1-b404-598d8ce9351e" />
 <img width="1672" height="747" alt="image" src="https://github.com/user-attachments/assets/326b1282-219b-47c6-a8be-eabd0f78093b" />
