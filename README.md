@@ -10,6 +10,16 @@ Built with Next.js, Tailwind CSS, shadcn/ui and Firebase (Auth + Firestore).
 npm install
 npm run dev
 ```
+# Public Mode 
+<img width="1437" height="856" alt="image" src="https://github.com/user-attachments/assets/fe9aca96-5a88-4230-a8fa-6370cdaedbb5" />
+<img width="1877" height="773" alt="image" src="https://github.com/user-attachments/assets/33d50218-f447-4ee1-b404-598d8ce9351e" />
+<img width="1672" height="747" alt="image" src="https://github.com/user-attachments/assets/326b1282-219b-47c6-a8be-eabd0f78093b" />
+<img width="1482" height="793" alt="image" src="https://github.com/user-attachments/assets/5139c99f-0804-4c7b-ab0a-615fb03ae907" />
+
+
+
+
+
 
 Open http://localhost:3000. Without Firebase configured the app runs in **public mode**: everything works except sign-in and saved history.
 
