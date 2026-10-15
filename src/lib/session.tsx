@@ -12,6 +12,8 @@ export interface SessionState {
   level: LevelChoice;
   prep: boolean;
   record: boolean;
+  /** Chosen microphone's deviceId; empty means the browser default. */
+  micId: string;
 }
 
 interface SessionCtx extends SessionState {
@@ -29,6 +31,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     level: "beginner",
     prep: false,
     record: false,
+    micId: "",
   });
   const [runId, setRunId] = useState(0);
   const used = useRef<Set<string>>(new Set());

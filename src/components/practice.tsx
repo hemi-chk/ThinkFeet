@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import type { Topic } from "@/data/topics";
 import { formatTime, useElapsed } from "@/hooks/use-timer";
 import { beep } from "@/lib/audio";
+import { openMic, SILENCE_PEAK } from "@/lib/mic";
+import { toMp3 } from "@/lib/mp3";
 import { useAuth } from "@/lib/auth";
 import { saveSession } from "@/lib/records";
 import { useSession } from "@/lib/session";
@@ -19,9 +21,15 @@ type Phase = "countdown" | "prep" | "announce" | "live" | "result";
 
 type SaveStatus = "saving" | "saved" | "failed";
 
+type Recording =
+  | { status: "encoding" }
+  /** silent: the mic delivered pure digital silence (muted or virtual input). */
+  | { status: "ready"; url: string; ext: string; silent: boolean };
+
 interface SpeechResult {
   ms: number;
-  audioUrl: string | null;
+  /** Null when recording was off. */
+  audio: Recording | null;
   /** Null in public mode (signed out), where nothing is saved. */
   save: SaveStatus | null;
 }
@@ -43,22 +51,39 @@ function PracticeRun() {
   const [phase, setPhase] = useState<Phase>(s.prep ? "countdown" : "announce");
   const [result, setResult] = useState<SpeechResult | null>(null);
   const audioUrl = useRef<string | null>(null);
+  // Bumped whenever the result is discarded, so a late-finishing MP3 conversion is ignored.
+  // (No unmount cleanup: Next.js runs effect cleanups when it merely hides a page, which would
+  // break the player on browser Back. A leftover blob URL is freed when the tab closes.)
+  const encodeRun = useRef(0);
 
   useEffect(() => {
     if (!s.name) router.replace("/setup");
   }, [s.name, router]);
 
-  useEffect(
-    () => () => {
-      if (audioUrl.current) URL.revokeObjectURL(audioUrl.current);
-    },
-    [],
-  );
+  const discardAudio = () => {
+    encodeRun.current++;
+    if (audioUrl.current) URL.revokeObjectURL(audioUrl.current);
+    audioUrl.current = null;
+  };
 
   const finishSpeech = (ms: number, blob: Blob | null) => {
-    audioUrl.current = blob ? URL.createObjectURL(blob) : null;
-    setResult({ ms, audioUrl: audioUrl.current, save: user && topic ? "saving" : null });
+    setResult({ ms, audio: blob ? { status: "encoding" } : null, save: user && topic ? "saving" : null });
     setPhase("result");
+    if (blob) {
+      const run = ++encodeRun.current;
+      // Convert to MP3 so it plays everywhere; if that fails, offer the original recording.
+      toMp3(blob)
+        .then(
+          ({ mp3, peak }) => ({ file: mp3, ext: "mp3", silent: peak < SILENCE_PEAK }),
+          () => ({ file: blob, ext: blob.type.includes("mp4") ? "m4a" : "webm", silent: false }),
+        )
+        .then(({ file, ext, silent }) => {
+          if (run !== encodeRun.current) return;
+          const url = URL.createObjectURL(file);
+          audioUrl.current = url;
+          setResult((r) => r && { ...r, audio: { status: "ready", url, ext, silent } });
+        });
+    }
     if (!user || !topic) return;
     saveSession(user.uid, {
       topicId: topic.id,
@@ -76,8 +101,7 @@ function PracticeRun() {
   };
 
   const nextTopic = () => {
-    if (audioUrl.current) URL.revokeObjectURL(audioUrl.current);
-    audioUrl.current = null;
+    discardAudio();
     setResult(null);
     setTopic(s.pickTopic());
     setPhase(s.prep ? "countdown" : "announce");
@@ -93,9 +117,9 @@ function PracticeRun() {
       {phase === "countdown" && <Countdown name={s.name} topic={topic} onDone={() => setPhase("prep")} />}
       {phase === "prep" && <Prep name={s.name} topic={topic} onDone={() => setPhase("announce")} />}
       {phase === "announce" && <Announce name={s.name} topic={topic} onDone={() => setPhase("live")} />}
-      {phase === "live" && <Live record={s.record} onDone={finishSpeech} />}
+      {phase === "live" && <Live record={s.record} micId={s.micId} onDone={finishSpeech} />}
       {phase === "result" && result && (
-        <Result name={s.name} ms={result.ms} audioUrl={result.audioUrl} save={result.save} onNext={nextTopic} />
+        <Result name={s.name} ms={result.ms} audio={result.audio} save={result.save} onNext={nextTopic} />
       )}
     </div>
   );
@@ -174,6 +198,9 @@ function Prep({ name, topic, onDone }: { name: string; topic: Topic; onDone: () 
   );
 }
 
+/** Longest a single announced phrase may take before the speech engine is treated as stuck. */
+const MAX_PHRASE_MS = 15_000;
+
 /** Reads the name and topic aloud Table Topics style: name, topic, topic, name. */
 function Announce({ name, topic, onDone }: { name: string; topic: Topic; onDone: () => void }) {
   const done = useEffectEvent(onDone);
@@ -208,8 +235,20 @@ function Announce({ name, topic, onDone }: { name: string; topic: Topic; onDone:
       u.onend = () => next(700);
       u.onerror = () => next(300);
       synth.speak(u);
-      // Some browsers never fire onend (no voices installed, or a stalled engine); don't get stuck.
-      later(() => next(0), 3000 + parts[i].length * 150);
+      // Some engines never fire onend. Only move on once the voice has actually gone quiet —
+      // advancing early queues the next phrase behind it, and leftovers then play during the
+      // speech. Network voices can be slow to start, so "slow" is not "stuck" until MAX_PHRASE_MS.
+      const spokenAt = performance.now();
+      const watchdog = () => {
+        if (advanced || cancelled) return;
+        if (!synth.speaking && !synth.pending) return next(300);
+        if (performance.now() - spokenAt > MAX_PHRASE_MS) {
+          synth.cancel();
+          return next(300);
+        }
+        later(watchdog, 500);
+      };
+      later(watchdog, 2000);
     };
     later(() => say(0), 300);
     return () => {
@@ -231,6 +270,10 @@ function Announce({ name, topic, onDone }: { name: string; topic: Topic; onDone:
   );
 }
 
+function silenceAnnouncer() {
+  if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+}
+
 // Table Topics timing: green at 1:00, yellow at 1:30, red at 2:00, 30s grace, then blinking red.
 function timingClass(ms: number) {
   const s = ms / 1000;
@@ -245,7 +288,15 @@ function timingClass(ms: number) {
 const SPEECH_THRESHOLD = 0.03;
 const SPEECH_HOLD_MS = 200;
 
-function Live({ record, onDone }: { record: boolean; onDone: (ms: number, blob: Blob | null) => void }) {
+function Live({
+  record,
+  micId,
+  onDone,
+}: {
+  record: boolean;
+  micId: string;
+  onDone: (ms: number, blob: Blob | null) => void;
+}) {
   const [start, setStart] = useState<number | null>(null);
   const elapsed = useElapsed(start);
   const manualStart = useRef<() => void>(() => {});
@@ -289,15 +340,18 @@ function Live({ record, onDone }: { record: boolean; onDone: (ms: number, blob: 
 
     const begin = (t: number) => {
       if (startedAt != null || disposed) return;
+      silenceAnnouncer();
       startedAt = t;
       setStart(t);
       stopListening = listenForHandBack(end);
     };
     manualStart.current = () => begin(performance.now());
+    // Nothing may speak during the speech: it's distracting, and the mic would mistake it for the speaker.
+    silenceAnnouncer();
 
     (async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream = await openMic(micId || undefined);
       } catch {
         toast.error("Microphone unavailable — use Start manually.");
         return;
@@ -356,7 +410,7 @@ function Live({ record, onDone }: { record: boolean; onDone: (ms: number, blob: 
       }
       releaseMedia();
     };
-  }, [record]);
+  }, [record, micId]);
 
   if (start == null) {
     return (
@@ -393,19 +447,19 @@ const saveMessages: Record<SaveStatus, string> = {
 function Result({
   name,
   ms,
-  audioUrl,
+  audio,
   save,
   onNext,
 }: {
   name: string;
   ms: number;
-  audioUrl: string | null;
+  audio: Recording | null;
   save: SaveStatus | null;
   onNext: () => void;
 }) {
   const verdict = verdictFor(ms);
   const c = timeComments[verdict];
-  const file = `thinkfeet-${name.replace(/\s+/g, "-").toLowerCase()}-${new Date().toISOString().slice(0, 10)}.webm`;
+  const file = `thinkfeet-${name.replace(/\s+/g, "-").toLowerCase()}-${new Date().toLocaleDateString("en-CA")}`; // local YYYY-MM-DD
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-fun-animated p-4 md:p-8">
       {verdict === "perfect" && <Confetti />}
@@ -418,12 +472,20 @@ function Result({
           <span className="font-display text-2xl font-semibold">Time comment:</span>
           <span className={cn("rounded-2xl border-2 px-5 py-3 text-lg font-bold text-foreground", c.className)}>{c.text}</span>
         </div>
-        {audioUrl && (
+        {audio?.status === "encoding" && <p className="animate-pulse text-muted-foreground">Preparing your recording…</p>}
+        {audio?.status === "ready" && (
           <div className="space-y-3">
-            <p>Click here to download your audio ↓</p>
+            {audio.silent && (
+              <p role="alert" className="rounded-2xl bg-danger-soft p-3 text-base text-destructive">
+                We couldn&apos;t hear anything in this recording — your microphone sent only silence. It may be muted
+                or a virtual device. Use <strong>Test microphone</strong> on the setup page to pick one that works.
+              </p>
+            )}
+            <p>Listen back to your speech:</p>
+            <audio controls src={audio.url} className="w-full" />
             <Button asChild className="rounded-full bg-mint text-foreground shadow-soft hover:bg-mint/85">
-              <a href={audioUrl} download={file}>
-                Download
+              <a href={audio.url} download={`${file}.${audio.ext}`}>
+                Download {audio.ext.toUpperCase()}
               </a>
             </Button>
           </div>
