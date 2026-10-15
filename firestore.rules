@@ -1,0 +1,57 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function validProfile(d) {
+      return d.keys().hasOnly(['displayName', 'email', 'joinedAt', 'lastSeenAt'])
+        && d.displayName is string && d.displayName.size() <= 100
+        && d.email is string && d.email.size() <= 320
+        && d.joinedAt is timestamp
+        && d.lastSeenAt == request.time;
+    }
+
+    function validSession(d) {
+      return d.keys().hasOnly([
+          'topicId', 'topicText', 'topicLevel', 'chosenLevel',
+          'prep', 'recorded', 'durationMs', 'verdict', 'createdAt'
+        ])
+        && d.topicId is string && d.topicId.size() <= 64
+        && d.topicText is string && d.topicText.size() <= 500
+        && d.topicLevel in ['beginner', 'intermediate', 'pro']
+        && d.chosenLevel in ['beginner', 'intermediate', 'pro', 'unsure']
+        && d.prep is bool
+        && d.recorded is bool
+        && d.durationMs is int && d.durationMs >= 0 && d.durationMs < 3600000
+        && d.verdict in ['under', 'short', 'perfect', 'grace', 'over']
+        && d.createdAt == request.time;
+    }
+
+    // Topics are public to read; they're managed with the Admin SDK (npm run seed:topics).
+    match /topics/{topicId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid) && validProfile(request.resource.data);
+      allow delete: if false;
+
+      // Practice history is append-only; users can read and delete their own speeches.
+      match /sessions/{sessionId} {
+        allow read, delete: if isOwner(uid);
+        allow create: if isOwner(uid) && validSession(request.resource.data);
+        allow update: if false;
+      }
+    }
+  }
+}
