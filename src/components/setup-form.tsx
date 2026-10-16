@@ -2,12 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { MicCheck } from "@/components/mic-check";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
+import { openMic, saveMicId, savedMicId } from "@/lib/mic";
 import { useSession, type LevelChoice } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +36,11 @@ export function SetupForm() {
   const [level, setLevel] = useState<LevelChoice>(s.level);
   const [prep, setPrep] = useState(s.prep);
   const [record, setRecord] = useState(s.record);
+  const [micId, setMicId] = useState(() => s.micId || (typeof window === "undefined" ? "" : savedMicId()));
+  const chooseMic = (id: string) => {
+    setMicId(id);
+    saveMicId(id);
+  };
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -44,9 +51,9 @@ export function SetupForm() {
     setBusy(true);
     try {
       // Ask for the mic up front so the practice screen can detect when the speaker starts.
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await openMic(micId || undefined);
       stream.getTracks().forEach((t) => t.stop());
-      s.setSession({ name: finalName, level, prep, record });
+      s.setSession({ name: finalName, level, prep, record, micId });
       router.push("/practice");
     } catch {
       setError(
@@ -117,6 +124,10 @@ export function SetupForm() {
               Not available yet
             </Badge>
           </Label>
+        </div>
+
+        <div className="flex justify-center">
+          <MicCheck deviceId={micId} onDeviceChange={chooseMic} />
         </div>
 
         {error && (
