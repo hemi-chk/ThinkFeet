@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import type { Topic } from "@/data/topics";
 import { formatTime, useElapsed } from "@/hooks/use-timer";
+import { useWakeLock } from "@/hooks/use-wake-lock";
 import { beep } from "@/lib/audio";
 import { openMic, SILENCE_PEAK } from "@/lib/mic";
 import { toMp3 } from "@/lib/mp3";
@@ -55,6 +56,8 @@ function PracticeRun() {
   // (No unmount cleanup: Next.js runs effect cleanups when it merely hides a page, which would
   // break the player on browser Back. A leftover blob URL is freed when the tab closes.)
   const encodeRun = useRef(0);
+  // Keep the phone screen on from countdown to the end of the speech.
+  useWakeLock(phase !== "result");
 
   useEffect(() => {
     if (!s.name) router.replace("/setup");
@@ -300,6 +303,7 @@ function Live({
   const [start, setStart] = useState<number | null>(null);
   const elapsed = useElapsed(start);
   const manualStart = useRef<() => void>(() => {});
+  const manualEnd = useRef<() => void>(() => {});
   const done = useEffectEvent(onDone);
 
   useEffect(() => {
@@ -346,6 +350,7 @@ function Live({
       stopListening = listenForHandBack(end);
     };
     manualStart.current = () => begin(performance.now());
+    manualEnd.current = end;
     // Nothing may speak during the speech: it's distracting, and the mic would mistake it for the speaker.
     silenceAnnouncer();
 
@@ -425,7 +430,17 @@ function Live({
   return (
     <div className={cn("fixed inset-0 text-timing-foreground transition-colors duration-500", timingClass(elapsed))}>
       <span className="absolute right-6 top-5 font-display text-xl tabular-nums opacity-70">{formatTime(elapsed)}</span>
-      <p className="absolute inset-x-0 bottom-8 text-center font-hand text-xl opacity-80">[ press space to end ]</p>
+      {/* A button rather than tap-anywhere, so a stray touch can't end the speech. */}
+      <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 px-6 pb-[max(2rem,env(safe-area-inset-bottom))]">
+        <Button
+          size="lg"
+          onClick={() => manualEnd.current()}
+          className="h-14 w-full max-w-xs rounded-full bg-card/85 text-lg font-semibold text-foreground shadow-soft backdrop-blur hover:bg-card"
+        >
+          End speech
+        </Button>
+        <p className="font-hand text-base opacity-70 pointer-coarse:hidden">or press Space</p>
+      </div>
     </div>
   );
 }
